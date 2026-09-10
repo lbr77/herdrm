@@ -306,6 +306,8 @@ public enum HerdrError: Error, LocalizedError, Sendable {
     case malformedResponse(String)
     case incompatibleProtocol(Int)
     case tunnelFailed(String)
+    case tailcatBridgeFailed(String)
+    case tailcatTokenMissing
     case fileOperationFailed(String)
     case fileTransferFailed(String)
 
@@ -320,6 +322,8 @@ public enum HerdrError: Error, LocalizedError, Sendable {
         case .malformedResponse(let reason): return "malformed response: \(reason)"
         case .incompatibleProtocol(let version): return "herdr protocol \(version) is too old (need >= 17)"
         case .tunnelFailed(let reason): return "SSH tunnel failed: \(reason)"
+        case .tailcatBridgeFailed(let reason): return "tailcat bridge failed: \(reason)"
+        case .tailcatTokenMissing: return "no tailcat token saved for this device — edit the device and paste its token"
         case .fileOperationFailed(let reason): return "file operation failed: \(reason)"
         case .fileTransferFailed(let reason): return "file transfer failed: \(reason)"
         }

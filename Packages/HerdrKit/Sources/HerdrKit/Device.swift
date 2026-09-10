@@ -1,11 +1,16 @@
 import Foundation
 
 /// A machine running herdr. `local` talks straight to the Unix socket;
-/// `ssh` reaches the remote socket through an OpenSSH stream-local forward.
+/// `ssh` reaches the remote socket through an OpenSSH stream-local forward;
+/// `tailcat` reaches it through the herdr.tailcat plugin's WireGuard tunnel,
+/// bridged to a local socket by a spawned `herdr-tailcat-bridge` helper.
 public struct Device: Codable, Sendable, Identifiable, Equatable, Hashable {
     public enum Kind: Codable, Sendable, Equatable, Hashable {
         case local
         case ssh(target: String)   // e.g. "vincent@10.10.10.87" or "vincent@mac-studio.tail"
+        /// The token (a full-control credential) is not stored here; it lives in
+        /// the Keychain keyed by `id` — see `TailcatTokenStore`.
+        case tailcat
     }
 
     public var id: UUID
@@ -41,10 +46,24 @@ public struct Device: Codable, Sendable, Identifiable, Equatable, Hashable {
         return nil
     }
 
+    public var isTailcat: Bool {
+        if case .tailcat = kind { return true }
+        return false
+    }
+
+    /// Whether the device offers a shell channel. SSH and local do; tailcat
+    /// exposes only the herdr socket, so directory listing, file upload, OS
+    /// sniffing, and standalone shells are unavailable there.
+    public var hasShell: Bool {
+        if case .tailcat = kind { return false }
+        return true
+    }
+
     public var subtitle: String {
         switch kind {
         case .local: return "This Mac · herdr.sock"
         case .ssh(let target): return "\(target) · SSH"
+        case .tailcat: return "Tailcat tunnel"
         }
     }
 }

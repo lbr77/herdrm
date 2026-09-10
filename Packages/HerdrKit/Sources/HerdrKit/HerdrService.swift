@@ -41,6 +41,8 @@ public actor HerdrService {
         case .ssh:
             guard let tunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
             socketPath = try await tunnel.ensureUp()
+        case .tailcat:
+            socketPath = try await TailcatBridgeManager.shared.ensureUp(deviceID: device.id)
         }
         let client = SocketRPC(socketPath: socketPath)
         let pong: PingResult
@@ -62,6 +64,10 @@ public actor HerdrService {
                     await tunnel.tearDown()
                     throw HerdrError.tunnelFailed(forwardingFailure)
                 }
+            }
+            if case .tailcat = device.kind,
+               let detail = await TailcatBridgeManager.shared.recentError(deviceID: device.id) {
+                throw HerdrError.tailcatBridgeFailed(detail)
             }
             throw error
         }
@@ -127,6 +133,9 @@ public actor HerdrService {
     public func disconnect() async {
         rpc = nil
         if let tunnel { await tunnel.tearDown() }
+        if case .tailcat = device.kind {
+            await TailcatBridgeManager.shared.tearDown(deviceID: device.id)
+        }
     }
 
     private func client() throws -> SocketRPC {
@@ -229,6 +238,8 @@ public actor HerdrService {
     }
 
     /// The home directory on this device (local $HOME, or the probed remote one).
+    /// Tailcat exposes no shell, so there is no home to probe — callers use
+    /// `absolutePath`, which passes `~` through for the server to resolve.
     public func homeDirectory() async throws -> String {
         switch device.kind {
         case .local:
@@ -236,11 +247,21 @@ public actor HerdrService {
         case .ssh:
             guard let tunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
             return try await tunnel.probeRemoteHome()
+        case .tailcat:
+            throw HerdrError.tailcatBridgeFailed("tailcat exposes no shell to resolve the remote home directory")
         }
     }
 
     /// "~" and "~/…" resolve against this device's home; anything else passes through.
+    /// Tailcat exposes no shell to probe a home with, and herdr does not expand
+    /// `~` server-side, so a tailcat device needs an absolute path.
     public func absolutePath(_ path: String) async throws -> String {
+        if case .tailcat = device.kind {
+            guard path != "~", !path.hasPrefix("~/") else {
+                throw HerdrError.tailcatBridgeFailed("enter an absolute path — ~ can't be expanded without a shell on the device")
+            }
+            return path
+        }
         if path == "~" { return try await homeDirectory() }
         if path.hasPrefix("~/") { return try await homeDirectory() + "/" + path.dropFirst(2) }
         return path
@@ -272,6 +293,10 @@ public actor HerdrService {
             names = output.split(separator: "\n").compactMap { line in
                 line.hasSuffix("/") ? String(line.dropLast()) : nil
             }
+        case .tailcat:
+            // No shell channel to list with; the New Space browser hides itself
+            // for tailcat devices and this should not be reached.
+            throw HerdrError.tailcatBridgeFailed("tailcat exposes no shell to list directories")
         }
         return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
@@ -532,7 +557,8 @@ public actor HerdrService {
     }
 
     /// Makes a local file readable by this device and returns the device-local path.
-    /// Remote files are streamed over SSH into the user's private cache.
+    /// SSH files are streamed into the user's private cache; tailcat has no shell
+    /// channel, so attachments can't be staged there.
     public func stageAttachment(from localURL: URL) async throws -> String {
         try SSHTunnel.validateUploadCandidate(localURL)
         switch device.kind {
@@ -543,6 +569,8 @@ public actor HerdrService {
                 throw HerdrError.fileTransferFailed("no SSH connection for this device")
             }
             return try await tunnel.uploadFile(from: localURL)
+        case .tailcat:
+            throw HerdrError.fileTransferFailed("attachments aren't supported over tailcat — the tunnel carries only the herdr socket, no shell to receive files")
         }
     }
 
@@ -554,13 +582,24 @@ public actor HerdrService {
 
     // MARK: - Terminal attach
 
-    /// The command for a standalone interactive shell on this device.
+    /// The command for a standalone interactive shell on this device. Tailcat
+    /// exposes no shell channel, so standalone shells are a local/SSH-only
+    /// feature; the New Terminal sheet hides the option for tailcat devices.
     public nonisolated func terminalCommand() -> TerminalCommand {
         switch device.kind {
         case .local:
             return TerminalCommand(
                 executable: "/bin/sh",
                 args: ["-c", "cd \"$HOME\"; exec \"${SHELL:-/bin/zsh}\" -l"],
+                environment: [:],
+                authorizationID: nil
+            )
+        case .tailcat:
+            // Unreachable via the UI; a guard so a stray caller fails loudly
+            // instead of attaching to nothing.
+            return TerminalCommand(
+                executable: "/bin/sh",
+                args: ["-c", "printf '%s\\n' 'standalone shells need a shell channel; tailcat exposes only the herdr socket. Open a terminal inside a space instead.'"],
                 environment: [:],
                 authorizationID: nil
             )
@@ -631,6 +670,27 @@ public actor HerdrService {
             // or a `#!/usr/bin/env node` shim is found and then fails at exec.
             // TERM/COLUMNS/LINES stay with SwiftTerm.
             var environment = (ShellEnvironment.cached ?? .empty).launchEnvironment(binary: nil)
+            environment.removeValue(forKey: "TERM")
+            environment.removeValue(forKey: "COLUMNS")
+            environment.removeValue(forKey: "LINES")
+            let script = "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
+                + "exec \"$hb\" \(attachArguments)"
+            return TerminalCommand(
+                executable: "/bin/sh",
+                args: ["-c", script],
+                environment: environment,
+                authorizationID: nil
+            )
+        case .tailcat:
+            // Run the local herdr CLI against the bridge's local socket: the
+            // bridge forwards the attach stream through the tailcat tunnel to
+            // the remote herdr. The bridge is kept up by the device's session;
+            // the socket path is deterministic so this synchronous command can
+            // name it without awaiting the manager. Binary selection still
+            // applies — the local CLI's protocol must match the remote server.
+            let socketPath = TailcatBridgeManager.localSocketPath(deviceID: device.id)
+            var environment = (ShellEnvironment.cached ?? .empty).launchEnvironment(binary: nil)
+            environment["HERDR_SOCKET_PATH"] = socketPath
             environment.removeValue(forKey: "TERM")
             environment.removeValue(forKey: "COLUMNS")
             environment.removeValue(forKey: "LINES")

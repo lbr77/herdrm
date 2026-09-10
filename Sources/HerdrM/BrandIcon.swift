@@ -144,7 +144,7 @@ struct DeviceChip: View {
     var body: some View {
         let tint = Theme.deviceTint(device)
         HStack(spacing: 3) {
-            DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 8)
+            DeviceIcon(osID: device.osID, isLocal: device.isLocal, isTailcat: device.isTailcat, size: 8)
             Text(shortName)
                 .font(.system(size: 9, weight: .medium))
         }
@@ -157,18 +157,26 @@ struct DeviceChip: View {
     }
 }
 
-/// Device icon: sniffed-OS brand mark, falling back to a generic machine symbol.
+/// Device icon: sniffed-OS brand mark, falling back to a generic machine symbol
+/// (a mesh-network mark for tailcat devices, which expose no OS to sniff).
 struct DeviceIcon: View {
     let osID: String?
     let isLocal: Bool
+    var isTailcat: Bool = false
     var size: CGFloat = 12
 
     var body: some View {
         if let resource = BrandIconLoader.osIcon(for: osID) {
             BrandIcon(resource: resource, size: size)
         } else {
-            Image(systemName: isLocal ? "laptopcomputer" : "desktopcomputer")
+            Image(systemName: symbolName)
                 .font(.system(size: size - 0.5))
         }
+    }
+
+    private var symbolName: String {
+        if isLocal { return "laptopcomputer" }
+        if isTailcat { return "point.3.connected.trianglepath.dotted" }
+        return "desktopcomputer"
     }
 }

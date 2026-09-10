@@ -1,6 +1,5 @@
 import Foundation
 import HerdrKit
-import SwiftTerm
 import SwiftUI
 
 enum ConnectionState: Equatable {
@@ -123,7 +122,19 @@ final class AppModel: ObservableObject {
             if let old = oldValue, old != selectedPane {
                 unreadAgents.remove(AgentUnreadKey(deviceID: old.deviceID, paneID: old.paneID))
             }
+            noteSelectedAttachSession()
         }
+    }
+
+    /// Keeps the selected pane's attach alive so switching back preserves its content.
+    /// Runs synchronously inside the `selectedPane` assignment, so the kept-alive entry
+    /// is in `attachSessions` in the same update the selection lands in — a separate
+    /// onAppear/onChange would leave a one-frame window with no view for the new pane.
+    private func noteSelectedAttachSession() {
+        guard let entry = selectedAttachedEntry,
+              !attachSessions.contains(where: { $0.id == entry.id })
+        else { return }
+        attachSessions.append(entry)
     }
     /// Finished agents the user has not opened since they flipped to `done`.
     @Published private(set) var unreadAgents: Set<AgentUnreadKey> = []
@@ -152,13 +163,22 @@ final class AppModel: ObservableObject {
     }
     static let splitRatioKey = "terminal.splitRatio"
     /// Live terminal views of the ⌘D split, used by menu commands to move focus.
-    /// Held weakly so the views are not kept alive by the model.
-    weak var splitAgentView: LocalProcessTerminalView?
-    weak var splitShellView: LocalProcessTerminalView?
+    /// The agent side is resolved from the attach registry by the current selection
+    /// (kept-alive attach views persist across switches, so a stored ref would go
+    /// stale); the shell side stays a weak ref since the split shell is a single view.
+    var splitAgentView: LineBreakTerminalView? {
+        selectedAttachedEntry.flatMap { AttachViewRegistry.view(for: $0.id) }
+    }
+    weak var splitShellView: LineBreakTerminalView?
     /// Standalone terminals. Their views stay alive while deselected —
     /// unlike agents, a local shell has no server side to reattach to.
     @Published var shellSessions: [ShellSession] = []
     @Published var selectedShellID: UUID?
+    /// Attached panes (agents/terminals) whose views stay alive after being viewed, so
+    /// switching away and back preserves their content instead of re-attaching. Each is
+    /// a distinct herdr pane, so their `--takeover` attaches never conflict. Pruned when
+    /// the underlying pane goes away; cleared (from the view) when no pane is selected.
+    @Published var attachSessions: [AttachedEntry] = []
     /// In-window device panel (NSPopover crashes in ViewBridge on macOS 26+ betas).
     @Published var showDevicePanel = false
     @Published var deviceToEdit: Device?
@@ -553,6 +573,9 @@ final class AppModel: ObservableObject {
 
     /// Every click opens another terminal, like New Agent opens another agent.
     func newShellSession(on device: Device) {
+        // Standalone shells need a shell channel; tailcat exposes only the
+        // herdr socket, so its terminals always live in a space.
+        guard !device.isTailcat else { return }
         let n = shellSessions.count + 1
         let session = ShellSession(
             id: UUID(),
@@ -710,6 +733,40 @@ final class AppModel: ObservableObject {
         setDeviceFilter(device.id)
     }
 
+    /// Adds a tailcat device: the token goes to the Keychain (keyed by the new
+    /// device id), never into devices.json. No OS probe — tailcat has no shell.
+    func addTailcatDevice(name: String, token: String) {
+        let device = Device(name: name, kind: .tailcat)
+        do {
+            try TailcatTokenStore.setToken(token, for: device.id)
+        } catch {
+            actionError = error.localizedDescription
+            return
+        }
+        devices.append(device)
+        store.save(devices)
+        startSession(device)
+        setDeviceFilter(device.id)
+    }
+
+    /// Renames a tailcat device and/or replaces its token (which reconnects it).
+    func updateTailcatDevice(_ id: UUID, name: String, token: String) {
+        guard let index = devices.firstIndex(where: { $0.id == id }), devices[index].isTailcat else { return }
+        devices[index].name = name
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed != (TailcatTokenStore.existingToken(for: id) ?? "") {
+            do {
+                try TailcatTokenStore.setToken(trimmed, for: id)
+            } catch {
+                actionError = error.localizedDescription
+                return
+            }
+            stopSession(id)
+            startSession(devices[index])
+        }
+        store.save(devices)
+    }
+
     func saveSSHPassword(_ password: String, for request: SSHAuthenticationRequest) {
         guard !password.isEmpty,
               let device = device(request.deviceID),
@@ -769,6 +826,7 @@ final class AppModel: ObservableObject {
     func removeDevice(_ device: Device) {
         guard !device.isLocal else { return }
         removeSSHPassword(for: device.id)
+        try? TailcatTokenStore.removeToken(for: device.id)
         if sshAuthenticationRequest?.deviceID == device.id { sshAuthenticationRequest = nil }
         stopSession(device.id)
         devices.removeAll { $0.id == device.id }
@@ -812,6 +870,10 @@ final class AppModel: ObservableObject {
             sessions[deviceID]?.panes = snapshot.ordinaryTerminalPanes
             let paneIDs = Set((snapshot.panes ?? []).map(\.paneID))
                 .union(snapshot.agents.map(\.paneID))
+            // Drop kept-alive attaches whose pane is gone (closed). A pane only taken
+            // over by another client still exists, so it stays — its Reconnect overlay
+            // needs the kept-alive child to rebuild the attach.
+            attachSessions.removeAll { $0.device.id == deviceID && !paneIDs.contains($0.ref.paneID) }
             if let selected = selectedPane, selected.deviceID == deviceID,
                !paneIDs.contains(selected.paneID) {
                 selectedPane = nil

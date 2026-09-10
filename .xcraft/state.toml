@@ -1,0 +1,10 @@
+workspace = "HerdrM.xcodeproj/project.xcworkspace"
+scheme = "HerdrMobile"
+configuration = "Debug"
+
+[destination]
+type = "Device"
+udid = "00008150-000964982628401C"
+identifier = "FBE0CA8D-2D4A-53E2-AE45-2C766815E8AF"
+name = "HUAWEI Pura X"
+device_type = "iPhone"

@@ -13,10 +13,11 @@ packages:
     path: Packages/HerdrKit
   HerdrSSH:
     path: Packages/HerdrSSH
-  SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm
-    # 1.19 ships the marked-text overlay used for IME preedit; do not reimplement it.
-    from: "1.19.0"
+  HerdrTailcat:
+    path: Packages/HerdrTailcat
+  libghostty-spm:
+    url: https://github.com/Lakr233/libghostty-spm.git
+    from: "1.6.20260909"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.9.6"
@@ -33,7 +34,9 @@ targets:
       - path: Resources/Localizable.xcstrings
     dependencies:
       - package: HerdrKit
-      - package: SwiftTerm
+      - package: HerdrTailcat
+      - package: libghostty-spm
+        product: GhosttyTerminal
       - package: Sparkle
     info:
       path: Sources/HerdrM/Info.plist
@@ -71,11 +74,17 @@ targets:
         LOCALIZATION_PREFERS_STRING_CATALOGS: YES
       configs:
         Debug:
-          # real identity so UserNotifications & friends work in dev builds
-          CODE_SIGN_IDENTITY: "Developer ID Application: MOE AI LLC (NCFNX3LJ83)"
+          # 本机开发：Manual + Apple Development 证书直接签（codesign 手动签
+          # 验证可行）。用证书 SHA-1 指纹而不是 "Apple Development"——这个 Xcode
+          # beta 给 macOS 匹配证书时会去找旧版 "Mac Development" 类型而忽略通用
+          # 名，按指纹则精确命中。app 无 entitlements、不开沙盒，本地通知不需要 profile。
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: 2F5DQ73X8L
+          CODE_SIGN_IDENTITY: "DC3A3317CF2BE48DB1F908639EB44E77EDAA98D6"
+          PROVISIONING_PROFILE_SPECIFIER: ""
           ONLY_ACTIVE_ARCH: YES
         Release:
-          CODE_SIGN_IDENTITY: "Developer ID Application: MOE AI LLC (NCFNX3LJ83)"
+          # CODE_SIGN_IDENTITY: "Developer ID Application: MOE AI LLC (NCFNX3LJ83)"
           ONLY_ACTIVE_ARCH: NO
           ARCHS: "arm64 x86_64"
 
@@ -85,10 +94,16 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - Sources/HerdrMobile
+      # The Nerd Font symbols fallback for agent-TUI icon glyphs, registered
+      # process-wide at launch (same file the macOS target bundles).
+      - path: Resources/Fonts
+        buildPhase: resources
     dependencies:
       - package: HerdrKit
       - package: HerdrSSH
-      - package: SwiftTerm
+      - package: HerdrTailcat
+      - package: libghostty-spm
+        product: GhosttyTerminal
     info:
       path: Sources/HerdrMobile/Info.plist
       properties:

@@ -9,3 +9,7 @@ Sources/HerdrM/Info.plist
 xcuserdata/
 build-rel/
 build-ios/
+Tools/herdr-tailcat-bridge/.build/
+Tools/herdr-tailcat-bridge/herdr-tailcat-bridge
+Tools/herdr-tailcat-bridge/vendor/
+Packages/HerdrTailcat/.build/

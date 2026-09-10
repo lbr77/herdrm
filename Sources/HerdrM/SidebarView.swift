@@ -429,7 +429,7 @@ struct SidebarView: View {
             } label: {
                 HStack(spacing: 6) {
                     if let device = model.filteredDevice {
-                        DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 10)
+                        DeviceIcon(osID: device.osID, isLocal: device.isLocal, isTailcat: device.isTailcat, size: 10)
                             .foregroundStyle(Theme.textSecondary)
                     } else {
                         Image(systemName: "square.stack.3d.up")
@@ -652,7 +652,7 @@ struct DevicePopoverRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 13)
+                DeviceIcon(osID: device.osID, isLocal: device.isLocal, isTailcat: device.isTailcat, size: 13)
                     .foregroundStyle(isActive ? Theme.text : Theme.textSecondary)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {

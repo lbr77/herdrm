@@ -75,6 +75,12 @@ public struct FileTransferProgress: Sendable {
 public actor DeviceFileService {
     public typealias ProgressHandler = @Sendable (FileTransferProgress) -> Void
 
+    /// tailcat exposes only the herdr socket over the tunnel — there is no
+    /// shell to run listings or move files, so every filesystem op is off.
+    private static let tailcatUnsupported = HerdrError.fileOperationFailed(
+        "the file manager isn't available over tailcat — the tunnel carries only the herdr socket, no shell"
+    )
+
     public let device: Device
     private let sshExecutableURL: URL
     private var cachedRemoteHome: String?
@@ -104,6 +110,8 @@ public actor DeviceFileService {
                 timeout: 30
             )
             entries = try Self.parseRemoteListing(output, directory: path)
+        case .tailcat:
+            throw Self.tailcatUnsupported
         }
         return DeviceDirectoryListing(
             path: path,
@@ -162,6 +170,8 @@ public actor DeviceFileService {
                 progress: progress
             )
             return destination
+        case .tailcat:
+            throw Self.tailcatUnsupported
         }
     }
 
@@ -219,6 +229,8 @@ public actor DeviceFileService {
                 replace: conflictPolicy == .replace
             )
             return destination
+        case .tailcat:
+            throw Self.tailcatUnsupported
         }
     }
 
@@ -242,6 +254,8 @@ public actor DeviceFileService {
         switch device.kind {
         case .local:
             return NSHomeDirectory()
+        case .tailcat:
+            throw Self.tailcatUnsupported
         case .ssh:
             if let cachedRemoteHome { return cachedRemoteHome }
             let output = try await runSSHData(command: "printf '%s' \"$HOME\"", timeout: 15)
@@ -284,6 +298,8 @@ public actor DeviceFileService {
         switch device.kind {
         case .local:
             return FileManager.default.fileExists(atPath: path)
+        case .tailcat:
+            throw Self.tailcatUnsupported
         case .ssh:
             let command = """
             if [ -e \(HerdrService.shellQuoted(path)) ] || [ -L \(HerdrService.shellQuoted(path)) ]; then

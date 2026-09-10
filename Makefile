@@ -4,7 +4,7 @@ gen:
 	xcodegen generate
 
 build: gen
-	xcodebuild -project HerdrM.xcodeproj -scheme HerdrM -configuration Debug -derivedDataPath build build -skipPackagePluginValidation | tail -5
+	xcodebuild -project HerdrM.xcodeproj -scheme HerdrM -configuration Debug -derivedDataPath build build -skipPackagePluginValidation | xcbeautify
 
 run: build
 	open build/Build/Products/Debug/herdrm.app
